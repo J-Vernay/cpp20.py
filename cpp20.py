@@ -22,10 +22,11 @@ Examples:
 
 parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument('src', help='Source files and directories to inspect recursively.', nargs='*')
-parser.add_argument('--nobuild', action='store_true', help='Do not run commands. Can be combined with --show.')
 parser.add_argument('--gcc', help='Specifies gcc executable for compilation.', default='g++')
+parser.add_argument('--keep', action='store_true', help='Keep object and precompiled modules.')
 parser.add_argument('--show', help='Prints various info.', default='')
 parser.add_argument('--absolutepaths', action='store_true', help='Whether paths should be displayed as absolute.')
+parser.add_argument('--nobuild', action='store_true', help='Do not run commands. Can be combined with --show.')
 parser.add_argument('--obj', help='Directory for intermediate objects.', default='obj')
 parser.add_argument('--lib', help='Creates a static library.')
 parser.add_argument('--so', help='Creates a shared library.')
@@ -53,12 +54,15 @@ if not args.lib and not args.so and not args.exe:
     args.exe = "myprog"
 
 if args.absolutepaths:
-    args.obj = (Path() / args.obj).resolve()
+    args.obj = Path(args.obj).resolve()
+else:
+    args.obj = Path(args.obj)
 
 cmd_dir = 'mkdir -p {}'
 cmd_rm = 'rm -r {}'
-cmd_hu  = args.gcc + ' -x c++ -std=c++20 -fmodule-header {src} -c -o {obj} ' + args.flags
-cmd_obj = args.gcc + ' -x c++ -std=c++20 -fmodules-ts {src} -c -o {obj} ' + args.flags
+cmd_hu    = args.gcc + ' -std=c++20 -fmodules-ts -x c++-header {src}' + args.flags
+cmd_syshu = args.gcc + ' -std=c++20 -fmodules-ts -x c++-system-header {src}' + args.flags
+cmd_obj   = args.gcc + ' -std=c++20 -fmodules-ts -x c++ {src} -c -o {obj} ' + args.flags
 cmd_lib = 'ar rvs lib{out}.a {objs}'
 cmd_so  = args.gcc + ' {objs} -shared -o lib{out}.so ' + args.flags
 cmd_exe = args.gcc + ' {objs} -o {out} ' + args.flags
@@ -96,7 +100,15 @@ from collections import defaultdict
 from dataclasses import dataclass
 
 REGEX_RELATIVE_PATH = re.compile(r'^\"([\w/\.\-\\]+)\"') # group(1) is path
+REGEX_SYSTEM_PATH = re.compile(r'^\<([\w/\.\-\\]+)\>') # group(1) is path
 REGEX_MODULE_NAME = re.compile(r'^([\w\.\:]+)') # group(1) is module name
+
+def matchRegexes(text, regexes): # -> (which, result)
+    for regex in regexes:
+        match = regex.match(text)
+        if match is not None:
+            return regex, match.group(1)
+    return None, ''
 
 @dataclass
 class SourceInfo:
@@ -126,30 +138,34 @@ for path in SOURCE_PATHS:
 
         if words[0] == '#include':
             # include declaration
-            match = REGEX_RELATIVE_PATH.match(words[1])
-            if match is not None:
-                include_path = path.parent / match.group(1)
+            which, match = matchRegexes(words[1], [REGEX_SYSTEM_PATH, REGEX_RELATIVE_PATH])
+            if which is REGEX_RELATIVE_PATH:
+                include_path = path.parent / match
                 dependencies.append(include_path)
-            # else #include <header> or invalid #include
+            elif which is REGEX_SYSTEM_PATH:
+                if SOURCE_INFOS['sys:'+match].kind is None:
+                    SOURCE_INFOS['sys:'+match].kind = 'header'
+                dependencies.append('sys:'+match)
+            # else invalid #include
 
         elif words[0] == 'import' or (words[0] == 'export' and words[1] == 'import'):
-            match = None
             imported_word = words[1] if words[0] == 'import' else words[2];
-            match = REGEX_RELATIVE_PATH.match(imported_word)
+            which, match = matchRegexes(imported_word, [REGEX_SYSTEM_PATH, REGEX_RELATIVE_PATH, REGEX_MODULE_NAME])
 
-            if match is not None:
+            if which is REGEX_RELATIVE_PATH:
                 # header-unit found
-                import_path = path.parent / match.group(1)
-                SOURCE_INFOS[import_path].kind = "header-unit"
+                import_path = path.parent / match
+                SOURCE_INFOS[import_path].kind = 'header-unit'
                 dependencies.append(import_path)
-            else:
-                match = REGEX_MODULE_NAME.match(imported_word)
-                if match is not None:
-                    import_name = match.group(1)
-                    if import_name.startswith(':'):
-                        import_name = module_name.split(':',maxsplit=1)[0] + import_name
-                    dependencies.append(import_name)
-                # else import <header>; or invalid import
+            elif which is REGEX_SYSTEM_PATH:
+                # system-header-unit found
+                SOURCE_INFOS['sys:'+match].kind = 'system-header-unit'
+                dependencies.append('sys:'+match)
+            elif which is REGEX_MODULE_NAME:
+                # import module found
+                if match.startswith(':'):
+                    match = module_name.split(':',maxsplit=1)[0] + match
+                dependencies.append(match)
 
         elif module_name is not None:
             match = None
@@ -205,7 +221,6 @@ while topological_sorter.is_active():
         topological_sorter.done(path)
 
 ### BUILDING COMMANDS ###
-
 COMMANDS = []
 
 OUTDIRS = set() # must be created before command runned
@@ -215,19 +230,20 @@ objs = []
 for step in ORDER:
     stepcmds = []
     for path in step:
-        if not isinstance(path, Path):
-            continue
+        #if not isinstance(path, Path):
+        #    continue
         kind = SOURCE_INFOS[path].kind
         if kind == 'header':
             continue # not compiling header and header-units
+        elif kind == 'header-unit':
+            stepcmds.append(cmd_hu.format(src=path))
+        elif kind == 'system-header-unit':
+            stepcmds.append(cmd_syshu.format(src=path.removeprefix('sys:')))
         else:
             obj = str((args.obj / ('./'+str(path))).resolve()) + '.o'
             objs.append(obj)
             OUTDIRS.add(Path(obj).parent)
-            if kind == 'header-unit':
-                stepcmds.append(cmd_hu.format(src=path,obj=obj))
-            else:
-                stepcmds.append(cmd_obj.format(src=path,obj=obj))
+            stepcmds.append(cmd_obj.format(src=path,obj=obj))
     COMMANDS.append(sorted(stepcmds))
 # append final link command
 if args.lib:
@@ -239,7 +255,8 @@ if args.exe:
 # prepend mkdir commands
 COMMANDS = [[cmd_dir.format(dir) for dir in OUTDIRS]] + COMMANDS
 # removing intermediate objects
-COMMANDS.append([cmd_rm.format(f'{args.obj} gcm.cache')])
+if not args.keep:
+    COMMANDS.append([cmd_rm.format(f'{args.obj} gcm.cache')])
 
 ### SHOWING DESIRED INFOS ###
 
@@ -247,11 +264,11 @@ for showoption in args.show.split(','):
     if showoption == '':
         continue
     elif showoption == 'list':
-        for path, sourceinfo in sorted(SOURCE_INFOS.items(), key=lambda p:p[0]):
+        for path, sourceinfo in sorted(SOURCE_INFOS.items(), key=lambda p:str(p[0])):
             print(f'"{path}", {sourceinfo.kind}, {sourceinfo.module_name}')
     elif showoption == 'deps':
-        for path, deps in sorted(DEPENDENCIES.items(), key=lambda p:p[0]):
-            deps = [ f'"{dep}"' if isinstance(dep, Path) else dep for dep in deps]
+        for path, deps in sorted(DEPENDENCIES.items(), key=lambda p:str(p[0])):
+            deps = [ f'"{dep}"' for dep in deps]
             print(f'"{path}",', ', '.join(deps))
     elif showoption == 'order':
         for step in ORDER:

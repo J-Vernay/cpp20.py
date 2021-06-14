@@ -46,7 +46,8 @@ If this is not the case or if you want to display absolute paths, you can pass `
 
 `list` will output a CSV line per file, with their kind (one of
 *primary-module-interface*, *module-partition-interface*, *module-partition*,
-*module-unit*, *global-unit*, *header-unit* or *header*) and their module name (or empty).
+*module-unit*, *global-unit*, *header-unit*, *header* or *system-header-unit*)
+and their module name (or empty).
 ```
 ...$python3 cpp20.py --show=list
 "example/A.cppm", primary-module-interface, A
@@ -60,12 +61,15 @@ If this is not the case or if you want to display absolute paths, you can pass `
 "example/H0.h", header-unit,
 "example/H1.hxx", header,
 "example/main.cpp", global-unit,
+"sys:cstdio", system-header-unit,
+"sys:iostream", header,
+"sys:string_view", system-header-unit,
 ```
 `deps` will show each file followed by their dependencies.
 ```
 ...$python3 cpp20.py --show=deps
-"example/A.cppm", "example/A1.cppm"
-"example/A0.cpp",
+"example/A.cppm", "sys:string_view", "example/A1.cppm"
+"example/A0.cpp", "sys:iostream"
 "example/A1.cppm",
 "example/B.ixx",
 "example/B0.mxx", "example/H0.h"
@@ -74,13 +78,13 @@ If this is not the case or if you want to display absolute paths, you can pass `
 "example/H.hpp", "example/H1.hxx"
 "example/H0.h",
 "example/H1.hxx", "example/H0.h"
-"example/main.cpp", "example/C.cpp"
+"example/main.cpp", "example/C.cpp", "sys:cstdio"
 ```
 `order` will display lines of paths, such that each file is on a line after its dependencies.
 ```
 ...$python3 cpp20.py --show=order
-"example/B.ixx", "example/H0.h", "example/A1.cppm", "example/A0.cpp"
-"example/H1.hxx", "example/B0.mxx", "example/A.cppm"
+"example/B.ixx", "sys:iostream", "example/H0.h", "example/A1.cppm", "sys:cstdio", "sys:string_view"
+"example/A0.cpp", "example/B0.mxx", "example/H1.hxx", "example/A.cppm"
 "example/H.hpp"
 "example/C.cpp", "example/Bimpl.cxx"
 "example/main.cpp"
@@ -88,23 +92,25 @@ If this is not the case or if you want to display absolute paths, you can pass `
 `cmd` will display commands to be executed. Each group of command can be executed in parallel.
 ```
 ...$python3 cpp20.py --show=cmd
-mkdir -p obj/example
+mkdir -p /home/julien/Bureau/cpp20.py/obj/example
 
-g++ -x c++ -std=c++20 -fmodule-header example/H0.h -c -o obj/example/H0.h.o
-g++ -x c++ -std=c++20 -fmodules-ts example/A0.cpp -c -o obj/example/A0.cpp.o
-g++ -x c++ -std=c++20 -fmodules-ts example/A1.cppm -c -o obj/example/A1.cppm.o
-g++ -x c++ -std=c++20 -fmodules-ts example/B.ixx -c -o obj/example/B.ixx.o
+g++ -std=c++20 -fmodules-ts -x c++ example/A1.cppm -c -o /home/julien/Bureau/cpp20.py/obj/example/A1.cppm.o
+g++ -std=c++20 -fmodules-ts -x c++ example/B.ixx -c -o /home/julien/Bureau/cpp20.py/obj/example/B.ixx.o
+g++ -std=c++20 -fmodules-ts -x c++-header example/H0.h
+g++ -std=c++20 -fmodules-ts -x c++-system-header cstdio
+g++ -std=c++20 -fmodules-ts -x c++-system-header string_view
 
-g++ -x c++ -std=c++20 -fmodules-ts example/A.cppm -c -o obj/example/A.cppm.o
-g++ -x c++ -std=c++20 -fmodules-ts example/B0.mxx -c -o obj/example/B0.mxx.o
+g++ -std=c++20 -fmodules-ts -x c++ example/A.cppm -c -o /home/julien/Bureau/cpp20.py/obj/example/A.cppm.o
+g++ -std=c++20 -fmodules-ts -x c++ example/A0.cpp -c -o /home/julien/Bureau/cpp20.py/obj/example/A0.cpp.o
+g++ -std=c++20 -fmodules-ts -x c++ example/B0.mxx -c -o /home/julien/Bureau/cpp20.py/obj/example/B0.mxx.o
 
 
-g++ -x c++ -std=c++20 -fmodules-ts example/Bimpl.cxx -c -o obj/example/Bimpl.cxx.o
-g++ -x c++ -std=c++20 -fmodules-ts example/C.cpp -c -o obj/example/C.cpp.o
+g++ -std=c++20 -fmodules-ts -x c++ example/Bimpl.cxx -c -o /home/julien/Bureau/cpp20.py/obj/example/Bimpl.cxx.o
+g++ -std=c++20 -fmodules-ts -x c++ example/C.cpp -c -o /home/julien/Bureau/cpp20.py/obj/example/C.cpp.o
 
-g++ -x c++ -std=c++20 -fmodules-ts example/main.cpp -c -o obj/example/main.cpp.o
+g++ -std=c++20 -fmodules-ts -x c++ example/main.cpp -c -o /home/julien/Bureau/cpp20.py/obj/example/main.cpp.o
 
-g++ obj/example/H0.h.o obj/example/B.ixx.o obj/example/A1.cppm.o obj/example/A0.cpp.o obj/example/B0.mxx.o obj/example/A.cppm.o obj/example/Bimpl.cxx.o obj/example/C.cpp.o obj/example/main.cpp.o -o myprog
+g++ /home/julien/Bureau/cpp20.py/obj/example/A1.cppm.o /home/julien/Bureau/cpp20.py/obj/example/B.ixx.o /home/julien/Bureau/cpp20.py/obj/example/B0.mxx.o /home/julien/Bureau/cpp20.py/obj/example/A0.cpp.o /home/julien/Bureau/cpp20.py/obj/example/A.cppm.o /home/julien/Bureau/cpp20.py/obj/example/C.cpp.o /home/julien/Bureau/cpp20.py/obj/example/Bimpl.cxx.o /home/julien/Bureau/cpp20.py/obj/example/main.cpp.o -o myprog
 
 rm -r obj gcm.cache
 ```
