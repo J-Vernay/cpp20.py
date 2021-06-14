@@ -60,8 +60,8 @@ else:
 
 cmd_dir = 'mkdir -p {}'
 cmd_rm = 'rm -r {}'
-cmd_hu    = args.gcc + ' -std=c++20 -fmodules-ts -x c++-header {src}' + args.flags
-cmd_syshu = args.gcc + ' -std=c++20 -fmodules-ts -x c++-system-header {src}' + args.flags
+cmd_hu    = args.gcc + ' -std=c++20 -fmodules-ts -x c++-header {src} ' + args.flags
+cmd_syshu = args.gcc + ' -std=c++20 -fmodules-ts -x c++-system-header {src} ' + args.flags
 cmd_obj   = args.gcc + ' -std=c++20 -fmodules-ts -x c++ {src} -c -o {obj} ' + args.flags
 cmd_lib = 'ar rvs lib{out}.a {objs}'
 cmd_so  = args.gcc + ' {objs} -shared -o lib{out}.so ' + args.flags
