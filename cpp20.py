@@ -10,7 +10,7 @@ DESCRIPTION = """Browse C++20 sources and build it.
 Examples:
   ./cpp20.py --exe=myprog
        Use default compiler, browse current directory recursively and output 'myprog'
-  ./cpp20.py src --g++=g++-11 --so=libabc.so --exe=abc
+  ./cpp20.py src --gcc=g++-11 --so=libabc.so --exe=abc
        Use g++-11, browse recursively 'src', builds a shared library 'libabc.so' and an executable 'abc'
   ./build.py --flags="-O2 -Wall" --patterns+=*.C --exe=prog
        Use default compiler, adds -O2 and -Wall flags to all commands, browse also files ending with .C
