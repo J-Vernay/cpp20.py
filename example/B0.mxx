@@ -1,0 +1,3 @@
+export module B:p0;
+
+export import "H0.h";
