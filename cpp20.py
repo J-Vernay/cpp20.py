@@ -22,6 +22,7 @@ Examples:
 
 parser = argparse.ArgumentParser(description=DESCRIPTION, formatter_class=argparse.RawTextHelpFormatter)
 parser.add_argument('src', help='Source files and directories to inspect recursively.', nargs='*')
+parser.add_argument('--cache', action='store_true', help='Will not generate commands for uptodate objects. Implies --keep .')
 parser.add_argument('--gcc', help='Specifies gcc executable for compilation.', default='g++')
 parser.add_argument('--keep', action='store_true', help='Keep object and precompiled modules.')
 parser.add_argument('--show', help='Prints various info.', default='')
@@ -57,6 +58,9 @@ if args.absolutepaths:
     args.obj = Path(args.obj).resolve()
 else:
     args.obj = Path(args.obj)
+
+if args.cache:
+    args.keep = True
 
 cmd_dir = 'mkdir -p {}'
 cmd_rm = 'rm -r {}'
@@ -140,12 +144,12 @@ for path in SOURCE_PATHS:
             # include declaration
             which, match = matchRegexes(words[1], [REGEX_SYSTEM_PATH, REGEX_RELATIVE_PATH])
             if which is REGEX_RELATIVE_PATH:
-                include_path = path.parent / match
+                include_path = (path.parent / match).resolve()
                 dependencies.append(include_path)
             elif which is REGEX_SYSTEM_PATH:
-                if SOURCE_INFOS['sys:'+match].kind is None:
-                    SOURCE_INFOS['sys:'+match].kind = 'header'
-                dependencies.append('sys:'+match)
+                if SOURCE_INFOS['_sys_'+match].kind is None:
+                    SOURCE_INFOS['_sys_'+match].kind = 'header'
+                dependencies.append('_sys_'+match)
             # else invalid #include
 
         elif words[0] == 'import' or (words[0] == 'export' and words[1] == 'import'):
@@ -154,13 +158,13 @@ for path in SOURCE_PATHS:
 
             if which is REGEX_RELATIVE_PATH:
                 # header-unit found
-                import_path = path.parent / match
+                import_path = (path.parent / match).resolve()
                 SOURCE_INFOS[import_path].kind = 'header-unit'
                 dependencies.append(import_path)
             elif which is REGEX_SYSTEM_PATH:
                 # system-header-unit found
-                SOURCE_INFOS['sys:'+match].kind = 'system-header-unit'
-                dependencies.append('sys:'+match)
+                SOURCE_INFOS['_sys_'+match].kind = 'system-header-unit'
+                dependencies.append('_sys_'+match)
             elif which is REGEX_MODULE_NAME:
                 # import module found
                 if match.startswith(':'):
@@ -206,7 +210,6 @@ for path in DEPENDENCIES:
         for dep in DEPENDENCIES[path]
     ]
 
-
 ### SORTING DEPENDENCIES ###
 from graphlib import TopologicalSorter
 
@@ -227,22 +230,37 @@ OUTDIRS = set() # must be created before command runned
 
 objs = []
 
+
 for step in ORDER:
     stepcmds = []
     for path in step:
-        #if not isinstance(path, Path):
-        #    continue
         kind = SOURCE_INFOS[path].kind
         if kind == 'header':
             continue # not compiling header and header-units
         elif kind == 'header-unit':
+            # potential gcm cache
+            header_unit_path = (Path('gcm.cache/') / ('./'+str(path)+'.gcm')).resolve()
+            if args.cache and header_unit_path.is_file():
+                # check dependencies
+                resulttime = header_unit_path.stat().st_mtime
+                if all(d.stat().st_mtime < resulttime for d in DEPENDENCIES.get(path, [])+[path] if isinstance(d, Path)):
+                    continue
             stepcmds.append(cmd_hu.format(src=path))
         elif kind == 'system-header-unit':
-            stepcmds.append(cmd_syshu.format(src=path.removeprefix('sys:')))
+            path = path.removeprefix('_sys_');
+            if args.cache and len(list(Path('gcm.cache').glob(f'**/{path}.*'))) > 0:
+                continue
+            stepcmds.append(cmd_syshu.format(src=path.removeprefix('_sys_')))
         else:
             obj = str((args.obj / ('./'+str(path))).resolve()) + '.o'
             objs.append(obj)
-            OUTDIRS.add(Path(obj).parent)
+            obj = Path(obj)
+            OUTDIRS.add(obj.parent)
+            if args.cache and obj.is_file():
+                # check dependencies
+                objtime = obj.stat().st_mtime
+                if all(d.stat().st_mtime < objtime for d in DEPENDENCIES.get(path, [])+[path] if isinstance(d, Path)):
+                    continue
             stepcmds.append(cmd_obj.format(src=path,obj=obj))
     COMMANDS.append(sorted(stepcmds))
 # append final link command
@@ -254,9 +272,7 @@ if args.exe:
     COMMANDS.append([cmd_exe.format(objs=' '.join(objs), out=args.exe)])
 # prepend mkdir commands
 COMMANDS = [[cmd_dir.format(dir) for dir in OUTDIRS]] + COMMANDS
-# removing intermediate objects
-if not args.keep:
-    COMMANDS.append([cmd_rm.format(f'{args.obj} gcm.cache')])
+
 
 ### SHOWING DESIRED INFOS ###
 
@@ -280,14 +296,22 @@ for showoption in args.show.split(','):
             print()
     print()
 
+
 if args.nobuild:
     exit()
 
 ### RUNNING COMMANDS ###
-import subprocess, shlex
+import subprocess
+try:
+    if not args.cache:
+        # not reusing objects and header units
+        subprocess.run(cmd_rm.format(f'{args.obj} gcm.cache'), shell=True, capture_output=True)
 
-for stepcmds in COMMANDS:
-    for cmd in stepcmds:
-        result = subprocess.run(shlex.split(cmd), capture_output=True)
-        if result.returncode != 0:
-            raise RuntimeError(f'Command returned status {result.returncode}: {cmd}\n{result.stderr.decode()}')
+    for stepcmds in COMMANDS:
+        for cmd in stepcmds:
+            result = subprocess.run(cmd, shell=True,capture_output=True)
+            if result.returncode != 0:
+                raise RuntimeError(f'Command returned status {result.returncode}: {cmd}\n{result.stderr.decode()}')
+finally:
+    if not args.keep:
+        subprocess.run(cmd_rm.format(f'{args.obj} gcm.cache'), shell=True)

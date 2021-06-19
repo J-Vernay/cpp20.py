@@ -4,6 +4,11 @@
 It browses the source files to determine their dependencies.
 Then, it compiles then in order using the correct flags.
 
+**NEW:** You can use the `--cache` option to reuse artifacts from previous builds.
+Caching is done only by comparing modification times of files.
+Caching is not robust and may be invalidated due to modifying files without updating modification times forward,
+or changing compilation flags. In these cases, remove the `--cache` flag to cause a full rebuild.
+
 ## Dependencies:
 - g++ >= 11 (for C++20 module implementations)
 - Python >= 3.9 (for `graphlib.TopologicalSorter`)
