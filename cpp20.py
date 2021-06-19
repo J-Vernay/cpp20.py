@@ -125,6 +125,11 @@ DEPENDENCIES = {} # path -> [path|modulename...]
 MODULE_PARTITIONS = defaultdict(list) # module_name -> # module_partitions
 MODULE_NAMES_TO_PATH = {}
 
+if not args.absolutepaths:
+    to_path = lambda p: p.resolve().relative_to(current_path)
+else:
+    to_path = lambda p: p.resolve()
+
 for path in SOURCE_PATHS:
     kind, module_name, dependencies = 'global-unit', '', [] # global-unit by default
 
@@ -144,7 +149,7 @@ for path in SOURCE_PATHS:
             # include declaration
             which, match = matchRegexes(words[1], [REGEX_SYSTEM_PATH, REGEX_RELATIVE_PATH])
             if which is REGEX_RELATIVE_PATH:
-                include_path = (path.parent / match).resolve()
+                include_path = to_path(path.parent / match)
                 dependencies.append(include_path)
             elif which is REGEX_SYSTEM_PATH:
                 if SOURCE_INFOS['_sys_'+match].kind is None:
@@ -158,7 +163,7 @@ for path in SOURCE_PATHS:
 
             if which is REGEX_RELATIVE_PATH:
                 # header-unit found
-                import_path = (path.parent / match).resolve()
+                import_path = to_path(path.parent / match)
                 SOURCE_INFOS[import_path].kind = 'header-unit'
                 dependencies.append(import_path)
             elif which is REGEX_SYSTEM_PATH:
@@ -230,6 +235,13 @@ OUTDIRS = set() # must be created before command runned
 
 objs = []
 
+if args.cache:
+    to_be_build = set()
+    def uptodate(path, deps):
+        if not path.is_file():
+            return False
+        mytime = path.stat().st_mtime
+        return all((not d in to_be_build and d.stat().st_mtime < mytime) for d in deps if isinstance(d, Path))
 
 for step in ORDER:
     stepcmds = []
@@ -240,27 +252,23 @@ for step in ORDER:
         elif kind == 'header-unit':
             # potential gcm cache
             header_unit_path = (Path('gcm.cache/') / ('./'+str(path)+'.gcm')).resolve()
-            if args.cache and header_unit_path.is_file():
-                # check dependencies
-                resulttime = header_unit_path.stat().st_mtime
-                if all(d.stat().st_mtime < resulttime for d in DEPENDENCIES.get(path, [])+[path] if isinstance(d, Path)):
-                    continue
+            if args.cache and uptodate(header_unit_path, DEPENDENCIES.get(path, [])+[path]):
+                continue
+            to_be_build.add(path)
             stepcmds.append(cmd_hu.format(src=path))
         elif kind == 'system-header-unit':
-            path = path.removeprefix('_sys_');
-            if args.cache and len(list(Path('gcm.cache').glob(f'**/{path}.*'))) > 0:
+            if args.cache and len(list(Path('gcm.cache').glob(f'**/{path.removeprefix("_sys_")}.*'))) > 0:
                 continue
+            to_be_build.add(path)
             stepcmds.append(cmd_syshu.format(src=path.removeprefix('_sys_')))
         else:
             obj = str((args.obj / ('./'+str(path))).resolve()) + '.o'
             objs.append(obj)
             obj = Path(obj)
             OUTDIRS.add(obj.parent)
-            if args.cache and obj.is_file():
-                # check dependencies
-                objtime = obj.stat().st_mtime
-                if all(d.stat().st_mtime < objtime for d in DEPENDENCIES.get(path, [])+[path] if isinstance(d, Path)):
-                    continue
+            if args.cache and uptodate(obj, DEPENDENCIES.get(path, [])+[path]):
+                continue
+            to_be_build.add(path)
             stepcmds.append(cmd_obj.format(src=path,obj=obj))
     COMMANDS.append(sorted(stepcmds))
 # append final link command
