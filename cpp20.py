@@ -33,6 +33,7 @@ parser.add_argument('--lib', help='Creates a static library.')
 parser.add_argument('--so', help='Creates a shared library.')
 parser.add_argument('--exe', help='Creates an executable.')
 parser.add_argument('--flags', help='Provides additional flags to all commands.', default='')
+parser.add_argument('--linkflags', help='Provides additional flags to dynamic link command.', default='')
 parser.add_argument('--patterns', help='Patterns used for recognizing files to be inspected.',
                     default='*.h,*.c,*.hxx,*.cxx,*.ixx,*.mxx,*.hpp,*.cpp,*.cppm')
 parser.add_argument('--patterns+', dest='patternsPlus', help='Additional patterns (to not replace default ones).', default='')
@@ -68,8 +69,8 @@ cmd_hu    = args.gcc + ' -std=c++20 -fmodules-ts -x c++-header {src} ' + args.fl
 cmd_syshu = args.gcc + ' -std=c++20 -fmodules-ts -x c++-system-header {src} ' + args.flags
 cmd_obj   = args.gcc + ' -std=c++20 -fmodules-ts -x c++ {src} -c -o {obj} ' + args.flags
 cmd_lib = 'ar rvs lib{out}.a {objs}'
-cmd_so  = args.gcc + ' {objs} -shared -o lib{out}.so ' + args.flags
-cmd_exe = args.gcc + ' {objs} -o {out} ' + args.flags
+cmd_so  = args.gcc + ' {objs} -shared -o lib{out}.so ' + args.flags + ' ' + args.linkflags
+cmd_exe = args.gcc + ' {objs} -o {out} ' + args.flags + ' ' + args.linkflags
 if args.so: # shared objects require Position-Independent Code
     cmd_obj += ' -fPIC'
 
@@ -235,13 +236,17 @@ OUTDIRS = set() # must be created before command runned
 
 objs = []
 
+to_be_build = set()
+
 if args.cache:
-    to_be_build = set()
     def uptodate(path, deps):
         if not path.is_file():
             return False
         mytime = path.stat().st_mtime
         return all((not d in to_be_build and d.stat().st_mtime < mytime) for d in deps if isinstance(d, Path))
+else:
+    def uptodate(path, deps):
+        return False
 
 for step in ORDER:
     stepcmds = []
@@ -252,7 +257,7 @@ for step in ORDER:
         elif kind == 'header-unit':
             # potential gcm cache
             header_unit_path = (Path('gcm.cache/') / ('./'+str(path)+'.gcm')).resolve()
-            if args.cache and uptodate(header_unit_path, DEPENDENCIES.get(path, [])+[path]):
+            if uptodate(header_unit_path, DEPENDENCIES.get(path, [])+[path]):
                 continue
             to_be_build.add(path)
             stepcmds.append(cmd_hu.format(src=path))
@@ -266,7 +271,7 @@ for step in ORDER:
             objs.append(obj)
             obj = Path(obj)
             OUTDIRS.add(obj.parent)
-            if args.cache and uptodate(obj, DEPENDENCIES.get(path, [])+[path]):
+            if uptodate(obj, DEPENDENCIES.get(path, [])+[path]):
                 continue
             to_be_build.add(path)
             stepcmds.append(cmd_obj.format(src=path,obj=obj))
